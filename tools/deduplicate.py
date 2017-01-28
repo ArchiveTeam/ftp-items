@@ -18,7 +18,7 @@ class Deduplicate(object):
         if not os.path.isfile('records.json'):
             print('No records.json file was found.')
             print('We need the records.json for deduplication!')
-            if not 'y' in raw_input('Continue? [y/n]').lower():
+            if 'n' in raw_input('Continue? [y/n]').lower():
                 sys.exit(1)
         else:
             self.load_records()
@@ -47,7 +47,7 @@ class Deduplicate(object):
 
         while self.input_file_size > self.input_file.tell():
             for record in self.input_file:
-                if record.type == 'response':
+                if record.type == 'resource':
                     record = self.deduplicate_record(record)
                 else:
                     record = warc.WARCRecord(
@@ -88,6 +88,10 @@ class Deduplicate(object):
             record.header['WARC-Truncated'] = 'length'
             record.header['WARC-Profile'] = \
                 'http://netpreserve.org/warc/1.0/revisit/identical-payload-digest'
+            record.header['WARC-Payload-Digest'] = \
+                record.header['WARC-Block-Digest']
+
+            del record.header['WARC-Block-Digest']
 
             self.output_log.append({
                 'WARC-Record-ID': record.header['WARC-Record-ID'],
@@ -121,10 +125,14 @@ class Deduplicate(object):
         record_date = record.header['WARC-Date']
         record_length = record.header['Content-Length']
 
-        element = ';'.join([record_length, record_hash])
+        if record_length == '0':
+            return False
 
-        if element in cls.records:
-            return cls.records[element]
+        element = ';'.join([record_length, record_hash])
+        previous_record = cls.records.get(element)
+
+        if previous_record and previous_record['WARC-Record-ID'] != record_id:
+            return previous_record
 
         cls.records[element] = {'WARC-Target-URI': record_url,
             'WARC-Record-ID': record_id,
