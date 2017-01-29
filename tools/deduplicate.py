@@ -1,7 +1,11 @@
+import base64
 import codecs
+import hashlib
 import json
 import os
 import sys
+import time
+import uuid
 
 import warc
 
@@ -38,12 +42,14 @@ class Deduplicate(object):
     def deduplicate(self):
         info_record = self.input_file.read_record()
         info_record.header['WARC-Filename'] = self.output_filename
-        del info_record.header['WARC-Block-Digest']
+
+        warc_info_id = info_record.header['WARC-Warcinfo-ID']
 
         self.output_file.write_record(warc.WARCRecord(
             payload=info_record.payload.read(),
             header=info_record.header,
-            defaults=False))
+            defaults=False
+        ))
 
         while self.input_file_size > self.input_file.tell():
             for record in self.input_file:
@@ -55,6 +61,8 @@ class Deduplicate(object):
                         payload=record.payload.read(),
                         defaults=False)
                 self.output_file.write_record(record)
+
+        self.output_file.write_record(self.record_log(warc_info_id))
 
         self.input_file.close()
         self.output_file.close()
@@ -75,8 +83,6 @@ class Deduplicate(object):
         record_check = self.check_record(record)
 
         if record_check:
-            record_headers = []
-
             record.header['Content-Length'] = '0'
             record.header['WARC-Refers-To'] = \
                 record_check['WARC-Record-ID']
@@ -109,12 +115,35 @@ class Deduplicate(object):
             return warc.WARCRecord(
                 header=record.header,
                 payload='',
-                defaults=False)
+                defaults=False
+            )
         else:
             return warc.WARCRecord(
                 header=record.header,
                 payload=record.payload.read(),
-                defaults=False)
+                defaults=False
+            )
+
+    def record_log(self, warc_info_id):
+        log_payload = json.dumps(self.output_log, ensure_ascii=False)
+
+        log_header = {
+            'Content-Length': str(len(log_payload)),
+            'WARC-Target-URI': 'urn:X-archive-team-ftp-gov-deduplicate:log',
+            'WARC-Date': time.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'WARC-Block-Digest': "sha1:{}" \
+                 .format(base64.b32encode(hashlib.sha1(log_payload).digest()).decode()),
+            'WARC-Record-ID': '<{}>'.format(uuid.uuid4().urn),
+            'WARC-Warcinfo-ID': warc_info_id,
+            'Content-Type': 'application/json',
+            'WARC-Type': 'resource'
+        }
+
+        return warc.WARCRecord(
+            header=warc.WARCHeader(log_header, defaults=False),
+            payload=log_payload,
+            defaults=False
+        )
 
     @classmethod
     def check_record(cls, record):
@@ -134,10 +163,12 @@ class Deduplicate(object):
         if previous_record and previous_record['WARC-Record-ID'] != record_id:
             return previous_record
 
-        cls.records[element] = {'WARC-Target-URI': record_url,
+        cls.records[element] = {
+            'WARC-Target-URI': record_url,
             'WARC-Record-ID': record_id,
             'WARC-Date': record_date,
-            'Content-Length': record_length}
+            'Content-Length': record_length
+        }
 
         return False
 
@@ -162,7 +193,7 @@ class Deduplicate(object):
         input_file.close()
         output_file.close()
 
-        return input_file_records == output_file_records
+        return input_file_records == output_file_records - 1
 
     @classmethod
     def dump_records(cls):
