@@ -202,8 +202,9 @@ class Deduplicate(object):
 
     @classmethod
     def load_records(cls):
-        with open('records.json', 'r') as f:
-            cls.records = json.load(f)
+        if len(cls.records) == 0:
+            with open('records.json', 'r') as f:
+                cls.records = json.load(f)
 
 for f in os.listdir(sys.argv[1]):
     path = os.path.join(sys.argv[1], f)
